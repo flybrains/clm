@@ -10,7 +10,7 @@ def stop_server():
     server.shutdown_signal.set()
 
 if __name__=="__main__":
-    server = srv.Server(3)
+    server = srv.Server()
     app = QtWidgets.QApplication(sys.argv)
     window = ClosedLoopUI(server)
     window.set_callbacks()

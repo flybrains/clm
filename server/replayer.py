@@ -15,7 +15,6 @@ class Replayer(object):
         self.port = hw.params['source_port']
         self.shutdown = shutdown
 
-
     @staticmethod
     def _parse_log(address):
         playback = []
@@ -38,7 +37,7 @@ class Replayer(object):
                         pass
         return playback, times
 
-    def replay(self):#, log_address):
+    def run(self):#, log_address):
         #playback, times = self._parse_log(log_address)
         with self.conn:
             #self.conn.send(str.encode('0'))
