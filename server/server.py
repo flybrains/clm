@@ -84,8 +84,6 @@ class Server(object):
         self.read_next_from_source.set()
         self.kill_switch = False
 
-    def set_n_clients(self, n_clients):
-        self.n_clients = n_clients
 
     def connect_source(self):
         self.source_reader = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -134,10 +132,15 @@ class Server(object):
     def set_source(self, sourceID):
         self.sourceID = sourceID
 
+    def set_clients(self, list_of_clients):
+        self.clients = list_of_clients
+
+    def set_replayer_log_file(self, address):
+        self.replayer_log_file = address
 
     def bind_clients(self):
 
-        for i in range(self.n_clients):
+        for i in range(len(self.clients)):
             self.server.listen(1)
             clientsock, clientAddress = self.server.accept()
 
@@ -153,11 +156,10 @@ class Server(object):
     def run(self):
         self.reinitialize()
 
-        self.clients = [LightClient(), MotorClient(), MFCClient()]
 
         #self.replayer = Replayer(self.shutdown)
         if self.sourceID == 'REPLAYER':
-            self.source = Replayer(self.shutdown)
+            self.source = Replayer(self.shutdown, self.replayer_log_file)
         # if self.source == 'FICTRAC':
         #     self.source = FicTrac(self.shutdown)
 
