@@ -45,12 +45,10 @@ class Replayer(object):
                     if self.shutdown.is_set():
                         break
                     st = str(self.times[index+1] - self.times[index]).split('.')
-                    print(st)
                     if len(st)==1:
                         delta=float(0.0)
                     else:
                         delta = float('0.{}'.format(st[-1]))
-
                     time.sleep(delta)
                     self.conn.send(str.encode('{}'.format(self.playback[index])))
                     index += 1

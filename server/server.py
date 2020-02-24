@@ -4,7 +4,6 @@ import queue
 import socket
 import threading
 import numpy as np
-import concurrent.futures
 from PyQt5 import QtCore
 
 
@@ -18,7 +17,6 @@ from server.replayer import Replayer
 def stop_server_thread(stop_server_event, server_instance):
     while not stop_server_event.is_set():
         time.sleep(0.5)
-    print('broke')
     server_instance.shutdown_signal.set()
 
 class ClientManagerThread(threading.Thread):
@@ -84,6 +82,9 @@ class Server(object):
         self.read_next_from_source.set()
         self.kill_switch = False
 
+    def add_experiment_config(self, odor_mats, light_dict):
+        self.odor_mats =
+        self.light_dict =
 
     def connect_source(self):
         self.source_reader = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

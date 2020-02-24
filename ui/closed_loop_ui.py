@@ -24,6 +24,7 @@ Ui_MainWindow, QtBaseClass = uic.loadUiType(qtCreatorFile)
 
 class ClosedLoopUI(QMainWindow, Ui_MainWindow):
 	kill_server = QtCore.pyqtSignal()
+
 	def __init__(self, server_instance):
 		# General Initialization
 		QtWidgets.QMainWindow.__init__(self)
@@ -41,6 +42,7 @@ class ClosedLoopUI(QMainWindow, Ui_MainWindow):
 	def recieve_from_odorscape(self, experiment_pickle_name):
 		pickle_in = open(experiment_pickle_name, "rb")
 		self.experiment_data = pickle.load(pickle_in)
+		self.lightDictionary = self.experiment_data.lightDictionary
 		self.canvasImg = Canvas(self.experiment_data.w, self.experiment_data.h)
 		self.canvasImg.airchannel = self.experiment_data.airchannel
 		self.canvasImg.channel1 = self.experiment_data.channel1
@@ -80,6 +82,7 @@ class ClosedLoopUI(QMainWindow, Ui_MainWindow):
 
 		self.clients = [LightClient(), MotorClient(), MFCClient()]
 		self.server_instance.set_clients(self.clients)
+		self.server_instance.add_experiment_config([self.canvasImg.airchannel, self.canvasImg.channel1,self.canvasImg.channel2], self.lightDictionary)
 
 		if self.ReplayRadioButton.isChecked():
 			self.sourceID = 'REPLAYER'
