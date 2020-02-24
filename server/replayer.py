@@ -26,42 +26,39 @@ class Replayer(object):
                     try:
                         time, toks = row.split(",")[0], row.split(",")[1]
                         time = time.split("-")[1]
-                        print(toks)
                         dt = datetime.strptime(time, '%H:%M:%S.%f')
                         self.times.append(dt)
-
-
                         # mfc1, mfc2, mfc3
-                        self.playback.append([float(toks[1]),float(toks[2]),float(toks[3])])
+                        self.playback.append(float(toks))
                     except IndexError:
                         pass
 
     def run(self):
         self.parse_log()
-        print(self.playback)
-    #     with self.conn:
-    #         self.conn.send(str.encode('{}'.format(playback[0])))
-    #         time.sleep(0.015)
-    #         index = 0
-    #         while True:
-    #             try:
-    #                 if self.shutdown.is_set():
-    #                     break
-    #
-    #                 st = str(times[index+1] - times[index]).split('.')
-    #                 if len(st)==1:
-    #                     delta=float(0.0)
-    #                 else:
-    #                     delta = float('0.{}'.format(st[-1]))
-    #
-    #                 time.sleep(delta)
-    #                 self.conn.send(str.encode('{}'.format(playback[index])))
-    #                 index += 1
-    #
-    #             except (KeyboardInterrupt, BrokenPipeError, ConnectionResetError) as e:
-    #                 self.sock.close()
-    #                 sys.exit()
-    #
+
+        with self.conn:
+            self.conn.send(str.encode('{}'.format(self.playback[0])))
+            time.sleep(0.015)
+            index = 0
+            while True:
+                try:
+                    if self.shutdown.is_set():
+                        break
+                    st = str(self.times[index+1] - self.times[index]).split('.')
+                    print(st)
+                    if len(st)==1:
+                        delta=float(0.0)
+                    else:
+                        delta = float('0.{}'.format(st[-1]))
+
+                    time.sleep(delta)
+                    self.conn.send(str.encode('{}'.format(self.playback[index])))
+                    index += 1
+
+                except (KeyboardInterrupt, BrokenPipeError, ConnectionResetError) as e:
+                    self.sock.close()
+                    sys.exit()
+
     def bind(self):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

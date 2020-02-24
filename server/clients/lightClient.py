@@ -96,10 +96,6 @@ class LightClient(object):
                 break
 
 
-
-
-
-
             # Conditional stuff to get send_val
             send_val = 2
             self.send_to_server(send_val)

@@ -18,5 +18,5 @@ class MFCClient(object):
                 self.client.sendall(bytes('<>'.format(data),'UTF-8'))
                 self.client.close()
                 break
-            data = int(data)*2
+            data = float(data)*2
             self.client.sendall(bytes('<mt_{}>'.format(data),'UTF-8'))

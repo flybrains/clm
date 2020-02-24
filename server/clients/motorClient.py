@@ -19,5 +19,5 @@ class MotorClient(object):
                 self.client.sendall(bytes('<>'.format(data),'UTF-8'))
                 self.client.close()
                 break
-            data = int(data)*1
+            data = float(data)*1
             self.client.sendall(bytes('<mt_{}>'.format(data),'UTF-8'))

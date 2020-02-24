@@ -156,8 +156,6 @@ class Server(object):
     def run(self):
         self.reinitialize()
 
-
-        #self.replayer = Replayer(self.shutdown)
         if self.sourceID == 'REPLAYER':
             self.source = Replayer(self.shutdown, self.replayer_log_file)
         # if self.source == 'FICTRAC':
