@@ -24,18 +24,18 @@ class Replayer(object):
                     pass
                 else:
                     try:
-                        time, toks = row.split(",")[0], row.split(",")[1]
+                        time, toks = row.split(" -- ")[0], row.split(" -- ")[1]
+                        toks = [float(e) for e in toks.split(',')]
                         time = time.split("-")[1]
                         dt = datetime.strptime(time, '%H:%M:%S.%f')
                         self.times.append(dt)
                         # mfc1, mfc2, mfc3
-                        self.playback.append(float(toks))
+                        self.playback.append(toks)
                     except IndexError:
                         pass
 
     def run(self):
         self.parse_log()
-
         with self.conn:
             self.conn.send(str.encode('{}'.format(self.playback[0])))
             time.sleep(0.015)

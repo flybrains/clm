@@ -16,7 +16,7 @@ from server.clients.motorClient import MotorClient
 from server.clients.mfcClient import MFCClient
 
 from odorscape.OdorscapeMainWindow import Odorscape
-from odorscape.odorscape import Canvas
+from odorscape.odorscape import Canvas, OOBOption
 
 cwd = os.getcwd()
 qtCreatorFile = cwd+"/ui/closedloop.ui"
@@ -38,18 +38,28 @@ class ClosedLoopUI(QMainWindow, Ui_MainWindow):
 		self.stopServerPB.setEnabled(False)
 		utils.populate_taskbar(self)
 
-	@QtCore.pyqtSlot(str)
-	def recieve_from_odorscape(self, experiment_pickle_name):
-		pickle_in = open(experiment_pickle_name, "rb")
-		self.experiment_data = pickle.load(pickle_in)
-		self.lightDictionary = self.experiment_data.lightDictionary
+	def load_in_experiment(self, odorscape_window):
 		self.canvasImg = Canvas(self.experiment_data.w, self.experiment_data.h)
 		self.canvasImg.airchannel = self.experiment_data.airchannel
 		self.canvasImg.channel1 = self.experiment_data.channel1
 		self.canvasImg.channel2 = self.experiment_data.channel2
-		self.canvasImg = self.canvasImg.build_canvas()
-		self.setCanvasImg(self.canvasImg)
-		self.odorscape_window.close()
+		self.displayImg = self.canvasImg.build_canvas()
+		self.setCanvasImg(self.displayImg)
+
+		if odorscape_window:
+			self.odorscape_window.close()
+
+		try:
+			self.lightDictionary = self.experiment_data.lightDictionary
+		except AttributeError:
+			self.lightDictionary = None
+
+
+	@QtCore.pyqtSlot(str)
+	def recieve_from_odorscape(self, experiment_pickle_name):
+		pickle_in = open(experiment_pickle_name, "rb")
+		self.experiment_data = pickle.load(pickle_in)
+		self.load_in_experiment(True)
 
 	def launch_odorscape(self):
 		self.odorscape_window = Odorscape(self)
@@ -71,27 +81,33 @@ class ClosedLoopUI(QMainWindow, Ui_MainWindow):
 		self.gradientViewerLabel.setPixmap(pixmap)
 		self.gradientViewerLabel.show()
 
+	def load_experiment(self):
+		experiment_name = QFileDialog.getOpenFileName(self, 'Select Experiment to Open', os.getcwd(), "(*.pkl)")[0]
+		if experiment_name == '':
+			pass
+		pickle_in = open(experiment_name, "rb")
+		self.experiment_data = pickle.load(pickle_in)
+		self.load_in_experiment(False)
+
 	def open_log_file(self):
 		if not self.ReplayRadioButton.isChecked():
 			self.ReplayRadioButton.setChecked(True)
-		self.replay_log_name = QFileDialog.getOpenFileName(self, 'Select Log to Open', os.getcwd())[0]
+		self.replay_log_name = QFileDialog.getOpenFileName(self, 'Select Log to Open', os.getcwd(), "(*.log)")[0]
 		if self.replay_log_name != '':
 			self.replay_log_selected_indicator_label.setStyleSheet('background-color: green')
 
 	def pre_run_config_check(self):
-
-		self.clients = [LightClient(), MotorClient(), MFCClient()]
-		self.server_instance.set_clients(self.clients)
-		self.server_instance.add_experiment_config([self.canvasImg.airchannel, self.canvasImg.channel1,self.canvasImg.channel2], self.lightDictionary)
-
+		self.clients = None
 		if self.ReplayRadioButton.isChecked():
 			self.sourceID = 'REPLAYER'
 			self.server_instance.set_replayer_log_file(self.replay_log_name)
+			lookup_table = [self.canvasImg.airchannel, self.canvasImg.channel1,self.canvasImg.channel2]
+			self.clients = [LightClient(replay=True), MotorClient(lookup_table=lookup_table,oob_option=None,replay=True), MFCClient(replay=True)]
 		elif self.FTRadioButton.isChecked():
 			self.sourceID = 'FICTRAC'
-
+			self.server_instance.add_experiment_config([self.canvasImg.airchannel, self.canvasImg.channel1,self.canvasImg.channel2], self.lightDictionary)
 		self.server_instance.set_source(self.sourceID)
-
+		self.server_instance.set_clients(self.clients)
 
 	def run_server(self):
 		self.pre_run_config_check()
@@ -106,7 +122,6 @@ class ClosedLoopUI(QMainWindow, Ui_MainWindow):
 			self.stopServerPB.setEnabled(True)
 			self.runningLabel.setText("Running")
 			self.stoppedLabel.setText("")
-
 
 	def stop_server(self):
 		self.kill_server.emit()

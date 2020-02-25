@@ -82,9 +82,9 @@ class Server(object):
         self.read_next_from_source.set()
         self.kill_switch = False
 
-    def add_experiment_config(self, odor_mats, light_dict):
-        self.odor_mats =
-        self.light_dict =
+    # def add_experiment_config(self, odor_mats, light_dict):
+    #     self.odor_mats = odor_mats
+    #     self.light_dict = light_dict
 
     def connect_source(self):
         self.source_reader = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -108,26 +108,32 @@ class Server(object):
             self.read_next_from_source.wait()
             self.from_source = self.source_reader.recv(1024)
             data = self.from_source.decode('UTF-8')
-            [q[0].put(data) for q in self.queue_pairs]
+            data = [float(e) for e in data[1:-1].split(',')]
+
+            client_data = data[:-5]
+            client_data.insert(0,time.time())
+            [q[0].put(client_data) for q in self.queue_pairs]
+
             self.new_source_data.set()
             self.read_next_from_source.clear()
         print('Server Read Thread = Safe Exit')
 
     def write_to_destination(self):
-        a = time.time()
         while not self.shutdown.is_set():
+            a = time.time()
             [rwe.wait() for rwe in self.read_and_wrote_events]
             from_clients = [q[1].get() for q in self.queue_pairs]
             if from_clients[0]=="<>":
                 break
-            print(from_clients)
-            print("Latency: ", int(float(1000000*(time.time()-a - float(1/30)))), "us")
-            a = time.time()
             #########################
             # Write to Pi here
             #########################
+            # Join and log here
+            #########################
             self.read_next_from_source.set()
             [rwe.clear() for rwe in self.read_and_wrote_events]
+            print(from_clients)
+
         print('Server Write Thread = Safe Exit')
 
     def set_source(self, sourceID):

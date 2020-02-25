@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import QMessageBox, QAction, QMainWindow
+from PyQt5.QtWidgets import QMessageBox, QAction, QMainWindow, QFileDialog
 
 class ErrorMsg(QMessageBox):
 	def __init__(self, msg, parent=None):
@@ -13,9 +13,13 @@ class WarningMsg(QMessageBox):
 		self.setText(msg)
 		self.setWindowTitle('Warning')
 
+
 def populate_taskbar(ui):
 	newAct = QAction('Create New Experiment', ui)
+	loadAct = QAction('Load Existing Experiment', ui)
 	newAct.triggered.connect(ui.launch_odorscape)
+	loadAct.triggered.connect(ui.load_experiment)
 	menubar = QMainWindow.menuBar(ui)
 	ui.fileMenu = menubar.addMenu('File')
 	ui.fileMenu.addAction(newAct)
+	ui.fileMenu.addAction(loadAct)
