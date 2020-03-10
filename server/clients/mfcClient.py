@@ -7,12 +7,13 @@ class MFCClient(object):
         self.host = hw.params['local_host']
         self.port = hw.params['local_port']
         self.replay = replay
-        self.airchannel = lookup_table[0]
-        self.channel1 = lookup_table[1]
-        self.channel2 = lookup_table[2]
+        if not self.replay and lookup_table is not None:
+            self.airchannel = lookup_table[0]
+            self.channel1 = lookup_table[1]
+            self.channel2 = lookup_table[2]
 
-        self.w = self.airchannel.shape[1]
-        self.h = self.airchannel.shape[0]
+            self.w = self.airchannel.shape[1]
+            self.h = self.airchannel.shape[0]
 
     def connect(self):
         self.client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -81,12 +82,6 @@ class MFCClient(object):
                 send_val = [float(self.airchannel[px,py]), float(self.channel1[px,py]), float(self.channel2[px,py])]
 
         return send_val
-
-
-
-
-
-
 
 
 

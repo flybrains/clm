@@ -8,12 +8,13 @@ from datetime import datetime
 import server.hardware_parameters as hw
 
 class Replayer(object):
-    def __init__(self, shutdown, address):
+    def __init__(self, shutdown, server_shutdown, address):
         self.address = address
         self.connected = False
         self.host = hw.params['source_host']
         self.port = hw.params['source_port']
         self.shutdown = shutdown
+        self.server_shutdown = server_shutdown
 
     def parse_log(self):
         self.playback = []
@@ -39,8 +40,7 @@ class Replayer(object):
         with self.conn:
             self.conn.send(str.encode('{}'.format(self.playback[0])))
             time.sleep(0.015)
-            index = 0
-            while True:
+            for index in range(len(self.times)-1):
                 try:
                     if self.shutdown.is_set():
                         break
@@ -51,11 +51,14 @@ class Replayer(object):
                         delta = float('0.{}'.format(st[-1]))
                     time.sleep(delta)
                     self.conn.send(str.encode('{}'.format(self.playback[index])))
-                    index += 1
 
                 except (KeyboardInterrupt, BrokenPipeError, ConnectionResetError) as e:
                     self.sock.close()
                     sys.exit()
+            self.conn.send(str.encode('{}'.format('<>')))
+        self.server_shutdown.set()
+        print('Replayer Thread = Safe Exit')
+
 
     def bind(self):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

@@ -3,6 +3,7 @@ import cv2
 import sys
 import pickle
 import threading
+import numpy as np
 
 
 from PyQt5 import QtCore, QtGui, QtWidgets, uic
@@ -11,6 +12,7 @@ from PyQt5.QtWidgets import QLabel, QMainWindow, QTextEdit, QAction, QFileDialog
 
 import ui.utils as utils
 import server.server as server
+import server.fictrac as ft
 from server.clients.lightClient import LightClient
 from server.clients.motorClient import MotorClient
 from server.clients.mfcClient import MFCClient
@@ -37,6 +39,12 @@ class ClosedLoopUI(QMainWindow, Ui_MainWindow):
 		self.sourceID = None
 		self.stopServerPB.setEnabled(False)
 		utils.populate_taskbar(self)
+		self.UIClientInstance = utils.UIClient()
+		self.FrameGrabInstance = utils.FicTracFrameGrabber()
+		self.FTConfig = None
+		dummy = threading.Event()
+		self.FicTracInstance = ft.FicTraccer(dummy)
+
 
 	def load_in_experiment(self, odorscape_window):
 		self.canvasImg = Canvas(self.experiment_data.w, self.experiment_data.h)
@@ -45,6 +53,8 @@ class ClosedLoopUI(QMainWindow, Ui_MainWindow):
 		self.canvasImg.channel2 = self.experiment_data.channel2
 		self.displayImg = self.canvasImg.build_canvas()
 		self.setCanvasImg(self.displayImg)
+		self.window_w = self.displayImg.shape[1]
+		self.window_h = self.displayImg.shape[0]
 
 		if odorscape_window:
 			self.odorscape_window.close()
@@ -54,22 +64,71 @@ class ClosedLoopUI(QMainWindow, Ui_MainWindow):
 		except AttributeError:
 			self.lightDictionary = None
 
-
 	@QtCore.pyqtSlot(str)
 	def recieve_from_odorscape(self, experiment_pickle_name):
 		pickle_in = open(experiment_pickle_name, "rb")
 		self.experiment_data = pickle.load(pickle_in)
 		self.load_in_experiment(True)
-
 	def launch_odorscape(self):
 		self.odorscape_window = Odorscape(self)
 		self.odorscape_window.send_to_closedloop.connect(self.recieve_from_odorscape)
 		self.odorscape_window.show()
 
+	@QtCore.pyqtSlot(list)
+	def use_server_data(self, server_info):
+		self.update_viewing_window_track(server_info[7], server_info[8])
+		self.populate_labels(server_info)
+
+	def update_viewing_window_track(self, x, y):
+		x = x + self.window_w/2
+		y = self.window_h-(y + self.window_h/2)
+		self.displayed_with_track = self.displayImg.copy()
+		self.displayed_with_track = cv2.circle(self.displayed_with_track, (int(x), int(y)), 6, (0,0,0),-1)
+		self.setCanvasImg(self.displayed_with_track)
+
+	@QtCore.pyqtSlot()
+	def update_FT_window_track(self):
+		aimage = self.FrameGrabInstance.ft_mat
+		bimage = aimage.copy()
+		self.cimage = QImage(bimage, bimage.shape[1], bimage.shape[0], QImage.Format_RGB888)
+		self.dimage = self.cimage.scaled(640,480)
+		e_pixmap = QPixmap(self.dimage)
+		f_pixmap = e_pixmap.scaled(640, 480)
+		self.FTLabel.setPixmap(f_pixmap)
+		self.FTLabel.show()
+
+	def pick_ft_config(self):
+		self.FTConfig = QFileDialog.getOpenFileName(self, 'Select FT Config to Use', os.getcwd(), "(*.txt)")[0]
+		self.FicTracInstance.add_config_address(self.FTConfig)
+
 	def set_callbacks(self):
 		self.runServerPB.clicked.connect(self.run_server)
 		self.stopServerPB.clicked.connect(self.stop_server)
 		self.selectLogPB.clicked.connect(self.open_log_file)
+		self.UIClientInstance.new_data.connect(self.use_server_data)
+		self.editFTConfigPB.clicked.connect(self.FicTracInstance.edit_config)
+		self.pickFTConfigPB.clicked.connect(self.pick_ft_config)
+
+	def populate_labels(self, server_info):
+		self.xLabel.setText(str(round(server_info[7],2)))
+		self.yLabel.setText(str(round(server_info[8],2)))
+		self.headingLabel.setText(str(round(server_info[9],2)))
+		self.motorLabel.setText(str(round(server_info[1])))
+		self.mfc1Label.setText(str(round(server_info[2],2)))
+		self.mfc2Label.setText(str(round(server_info[3],2)))
+		self.mfc3Label.setText(str(round(server_info[4],2)))
+		self.led1Label.setText(str(round(server_info[5],2)))
+		self.led2Label.setText(str(round(server_info[6],2)))
+
+		if server_info[5]>0.0:
+			self.redLEDIndicatorLabel.setStyleSheet('background-color: red')
+		else:
+			self.redLEDIndicatorLabel.setStyleSheet("")
+
+		if server_info[6]>0.0:
+			self.greenLEDIndicatorLabel.setStyleSheet('background-color: red')
+		else:
+			self.greenLEDIndicatorLabel.setStyleSheet("")
 
 	def setCanvasImg(self, image):
 		image = cv2.cvtColor(image,cv2.COLOR_BGR2RGB)
@@ -84,7 +143,7 @@ class ClosedLoopUI(QMainWindow, Ui_MainWindow):
 	def load_experiment(self):
 		experiment_name = QFileDialog.getOpenFileName(self, 'Select Experiment to Open', os.getcwd(), "(*.pkl)")[0]
 		if experiment_name == '':
-			pass
+			return None
 		pickle_in = open(experiment_name, "rb")
 		self.experiment_data = pickle.load(pickle_in)
 		self.load_in_experiment(False)
@@ -98,34 +157,77 @@ class ClosedLoopUI(QMainWindow, Ui_MainWindow):
 
 	def pre_run_config_check(self):
 		self.clients = None
+		lookup_table = None
 		if self.ReplayRadioButton.isChecked():
+			self.replay = True
 			self.sourceID = 'REPLAYER'
+			self.FicTracInstance = None
 			self.server_instance.set_replayer_log_file(self.replay_log_name)
-			lookup_table = [self.canvasImg.airchannel, self.canvasImg.channel1,self.canvasImg.channel2]
-			self.clients = [LightClient(replay=True), MotorClient(lookup_table=lookup_table,oob_option=None,replay=True), MFCClient(replay=True)]
+			#lookup_table = [self.canvasImg.airchannel, self.canvasImg.channel1,self.canvasImg.channel2]
+			self.UIClientInstance.set_replay_status(True)
+			self.clients = [LightClient(replay=self.replay), MFCClient(lookup_table=lookup_table,oob_option=None,replay=self.replay), MotorClient(replay=self.replay), self.UIClientInstance]
+
 		elif self.FTRadioButton.isChecked():
+			self.replay = False
 			self.sourceID = 'FICTRAC'
-			self.server_instance.add_experiment_config([self.canvasImg.airchannel, self.canvasImg.channel1,self.canvasImg.channel2], self.lightDictionary)
+			self.FrameGrabInstance.new_data.connect(self.update_FT_window_track)
+			self.UIClientInstance.set_replay_status(False)
+
+			#self.server_instance.add_experiment_config([self.canvasImg.airchannel, self.canvasImg.channel1,self.canvasImg.channel2], self.lightDictionary)
+			self.clients = [LightClient(replay=self.replay), MFCClient(lookup_table=lookup_table,oob_option=None,replay=self.replay), MotorClient(replay=self.replay), self.UIClientInstance]
+
 		self.server_instance.set_source(self.sourceID)
 		self.server_instance.set_clients(self.clients)
 
+	@QtCore.pyqtSlot()
+	def set_ft_window_blank(self):
+		frame = np.zeros((480,640,3), dtype=np.uint8)
+		self.update_FT_window_track(mat=frame)
+
+	def server_waiter(self, server_done):
+		self.server_done.wait()
+		self.stop_server()
+
 	def run_server(self):
 		self.pre_run_config_check()
+
 		if self.sourceID is None:
 			msg = 'Select a data-generating source'
 			self.error = utils.ErrorMsg(msg)
 			self.error.show()
 		else:
-			thread = threading.Thread(target=self.server_instance.run)
+			self.server_done = threading.Event()
+			if self.replay:
+				self.FicTracInstance = None
+			else:
+				del self.FicTracInstance
+				self.stop_button_event_to_ft = threading.Event()
+				self.FicTracInstance = ft.FicTraccer(self.stop_button_event_to_ft)
+			thread = threading.Thread(target=self.server_instance.run, args=(self.server_done, self.FicTracInstance))
+			waiter = threading.Thread(target=self.server_waiter, args=(self.server_done,))
+
+			if not self.replay:
+				frame_grab = threading.Thread(target=self.FrameGrabInstance.run)
+				frame_grab.start()
 			thread.start()
+			waiter.start()
+
 			self.runServerPB.setEnabled(False)
 			self.stopServerPB.setEnabled(True)
 			self.runningLabel.setText("Running")
 			self.stoppedLabel.setText("")
 
+
 	def stop_server(self):
+		self.stop_button_event_to_ft.set()
 		self.kill_server.emit()
+		self.server_done.set()
 		self.runServerPB.setEnabled(True)
 		self.stopServerPB.setEnabled(False)
 		self.stoppedLabel.setText("Safe Exit")
 		self.runningLabel.setText("")
+
+		# self.runningLabel.repaint()
+		# self.stoppedLabel.repaint()
+		# self.runServerPB.repaint()
+		# self.stopServerPB.repaint()

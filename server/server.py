@@ -4,20 +4,16 @@ import queue
 import socket
 import threading
 import numpy as np
+import subprocess
 from PyQt5 import QtCore
 
-
 import server.hardware_parameters as hw
+import server.fictrac as ft
 from .clients.motorClient import MotorClient
 from .clients.lightClient import LightClient
 from .clients.mfcClient import MFCClient
 from server.replayer import Replayer
 
-
-def stop_server_thread(stop_server_event, server_instance):
-    while not stop_server_event.is_set():
-        time.sleep(0.5)
-    server_instance.shutdown_signal.set()
 
 class ClientManagerThread(threading.Thread):
     def __init__(self,clientAddress, clientsocket, data_queue, new_source_data, read_and_wrote, shutdown, client_shutdown):
@@ -54,6 +50,7 @@ class ClientManagerThread(threading.Thread):
             self.new_source_data.clear()
         print('Client Thread = Safe Exit')
 
+
 class Server(object):
     def __init__(self, hw_params=hw.params, type=None):
         self.local_host = hw_params['local_host']
@@ -82,10 +79,6 @@ class Server(object):
         self.read_next_from_source.set()
         self.kill_switch = False
 
-    # def add_experiment_config(self, odor_mats, light_dict):
-    #     self.odor_mats = odor_mats
-    #     self.light_dict = light_dict
-
     def connect_source(self):
         self.source_reader = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.source_reader.connect((self.source_host, self.source_port))
@@ -108,23 +101,35 @@ class Server(object):
             self.read_next_from_source.wait()
             self.from_source = self.source_reader.recv(1024)
             data = self.from_source.decode('UTF-8')
-            data = [float(e) for e in data[1:-1].split(',')]
+            if data=='<>':
+                [q[0].put('<>') for q in self.queue_pairs]
+                self.shutdown.set()
+                self.new_source_data.set()
+                self.read_next_from_source.clear()
+                break
 
-            client_data = data[:-5]
-            client_data.insert(0,time.time())
-            [q[0].put(client_data) for q in self.queue_pairs]
+            try:
+                data = [float(e) for e in data[1:-1].split(',')]
 
-            self.new_source_data.set()
-            self.read_next_from_source.clear()
+                client_data = data[:-5]
+                client_data.insert(0,time.time())
+
+                # Send information to hardware clients
+                [q[0].put(client_data) for q in self.queue_pairs]
+
+                self.new_source_data.set()
+                self.read_next_from_source.clear()
+            except ValueError:
+                pass
         print('Server Read Thread = Safe Exit')
 
     def write_to_destination(self):
         while not self.shutdown.is_set():
-            a = time.time()
             [rwe.wait() for rwe in self.read_and_wrote_events]
             from_clients = [q[1].get() for q in self.queue_pairs]
             if from_clients[0]=="<>":
                 break
+            print(from_clients)
             #########################
             # Write to Pi here
             #########################
@@ -132,7 +137,7 @@ class Server(object):
             #########################
             self.read_next_from_source.set()
             [rwe.clear() for rwe in self.read_and_wrote_events]
-            print(from_clients)
+
 
         print('Server Write Thread = Safe Exit')
 
@@ -160,19 +165,20 @@ class Server(object):
             newthread = ClientManagerThread(clientAddress, clientsock, queue_pair, self.new_source_data, read_and_wrote, self.shutdown, self.client_shutdown)
             newthread.start()
 
-    def run(self):
+    def run(self, server_done, FicTracInstance):
         self.reinitialize()
 
         if self.sourceID == 'REPLAYER':
-            self.source = Replayer(self.shutdown, self.replayer_log_file)
-        # if self.source == 'FICTRAC':
-        #     self.source = FicTrac(self.shutdown)
+            self.source = Replayer(self.shutdown, self.shutdown_signal, self.replayer_log_file)
+            self.source_binder = threading.Thread(target=self.source.bind)
+            self.source_binder.start()
+            try:
+                self.connect_source()
+            except ConnectionRefusedError:
+                time.sleep(2)
+                self.connect_source()
+            self.source_binder.join()
 
-
-        self.source_binder = threading.Thread(target=self.source.bind)
-        self.source_binder.start()
-        self.connect_source()
-        self.source_binder.join()
 
         self.bind()
         self.clients_binder = threading.Thread(target=self.bind_clients)
@@ -180,26 +186,41 @@ class Server(object):
         [client.connect() for client in self.clients]
         self.clients_binder.join()
 
-        self.source_thread = threading.Thread(target=self.source.run)
-        self.source_thread.start()
-        self.reader_thread = threading.Thread(target=self.read_from_source)
-        self.reader_thread.start()
+        print('a')
+
+        if self.sourceID == 'FICTRAC':
+            self.ft_thread_done = threading.Event()
+            self.ft_thread = threading.Thread(target=FicTracInstance.run, args=(self.ft_thread_done,))
+            self.ft_thread.start()
+
+        print('b')
+
+        if self.sourceID == 'REPLAYER':
+            self.source_thread = threading.Thread(target=self.source.run)
+            self.source_thread.start()
+            self.reader_thread = threading.Thread(target=self.read_from_source)
+            self.reader_thread.start()
 
         self.client_threads = [threading.Thread(target=client.run) for client in self.clients]
         [thread.start() for thread in self.client_threads]
 
+        print('c')
+
         self.writer_thread = threading.Thread(target=self.write_to_destination)
         self.writer_thread.start()
+
+        print('d')
 
         self.shutdown_signal.wait()
         self.activate_shutdown('soft')
         [thread.join() for thread in self.client_threads]
         self.activate_shutdown('hard')
-
         self.reader_thread.join()
         self.writer_thread.join()
         self.source_thread.join()
         print('Done... Shutting Down')
+        server_done.set()
+
 
 
 if __name__=='__main__':
