@@ -4,6 +4,7 @@ import sys
 import pickle
 import threading
 import numpy as np
+import time
 
 
 from PyQt5 import QtCore, QtGui, QtWidgets, uic
@@ -12,7 +13,7 @@ from PyQt5.QtWidgets import QLabel, QMainWindow, QTextEdit, QAction, QFileDialog
 
 import ui.utils as utils
 import server.server as server
-import server.fictrac as ft
+import server.fictraccer_temp as ft
 from server.clients.lightClient import LightClient
 from server.clients.motorClient import MotorClient
 from server.clients.mfcClient import MFCClient
@@ -42,8 +43,8 @@ class ClosedLoopUI(QMainWindow, Ui_MainWindow):
 		self.UIClientInstance = utils.UIClient()
 		self.FrameGrabInstance = utils.FicTracFrameGrabber()
 		self.FTConfig = None
-		dummy = threading.Event()
-		self.FicTracInstance = ft.FicTraccer(dummy)
+
+		self.FicTracInstance = ft.FicTraccer()
 
 
 	def load_in_experiment(self, odorscape_window):
@@ -158,10 +159,9 @@ class ClosedLoopUI(QMainWindow, Ui_MainWindow):
 	def pre_run_config_check(self):
 		self.clients = None
 		lookup_table = None
+
 		if self.ReplayRadioButton.isChecked():
 			self.replay = True
-			self.sourceID = 'REPLAYER'
-			self.FicTracInstance = None
 			self.server_instance.set_replayer_log_file(self.replay_log_name)
 			#lookup_table = [self.canvasImg.airchannel, self.canvasImg.channel1,self.canvasImg.channel2]
 			self.UIClientInstance.set_replay_status(True)
@@ -169,14 +169,12 @@ class ClosedLoopUI(QMainWindow, Ui_MainWindow):
 
 		elif self.FTRadioButton.isChecked():
 			self.replay = False
-			self.sourceID = 'FICTRAC'
 			self.FrameGrabInstance.new_data.connect(self.update_FT_window_track)
 			self.UIClientInstance.set_replay_status(False)
 
 			#self.server_instance.add_experiment_config([self.canvasImg.airchannel, self.canvasImg.channel1,self.canvasImg.channel2], self.lightDictionary)
 			self.clients = [LightClient(replay=self.replay), MFCClient(lookup_table=lookup_table,oob_option=None,replay=self.replay), MotorClient(replay=self.replay), self.UIClientInstance]
 
-		self.server_instance.set_source(self.sourceID)
 		self.server_instance.set_clients(self.clients)
 
 	@QtCore.pyqtSlot()
@@ -195,39 +193,29 @@ class ClosedLoopUI(QMainWindow, Ui_MainWindow):
 			msg = 'Select a data-generating source'
 			self.error = utils.ErrorMsg(msg)
 			self.error.show()
-		else:
+
+		elif self.replay:
+			self.FicTracInstance = None
 			self.server_done = threading.Event()
-			if self.replay:
-				self.FicTracInstance = None
-			else:
-				del self.FicTracInstance
-				self.stop_button_event_to_ft = threading.Event()
-				self.FicTracInstance = ft.FicTraccer(self.stop_button_event_to_ft)
 			thread = threading.Thread(target=self.server_instance.run, args=(self.server_done, self.FicTracInstance))
 			waiter = threading.Thread(target=self.server_waiter, args=(self.server_done,))
-
-			if not self.replay:
-				frame_grab = threading.Thread(target=self.FrameGrabInstance.run)
-				frame_grab.start()
 			thread.start()
 			waiter.start()
 
-			self.runServerPB.setEnabled(False)
-			self.stopServerPB.setEnabled(True)
-			self.runningLabel.setText("Running")
-			self.stoppedLabel.setText("")
+		else:
+			self.server_done = threading.Event()
+			thread = threading.Thread(target=self.server_instance.run, args=(self.server_done, self.FicTracInstance))
+			waiter = threading.Thread(target=self.server_waiter, args=(self.server_done,))
+			frame_grab = threading.Thread(target=self.FrameGrabInstance.run)
+			#frame_grab.start()
+			thread.start()
+			waiter.start()
 
+		self.runServerPB.setEnabled(False)
+		self.stopServerPB.setEnabled(True)
+		self.runningLabel.setText("Running")
+		self.stoppedLabel.setText("")
 
 	def stop_server(self):
-		self.stop_button_event_to_ft.set()
 		self.kill_server.emit()
 		self.server_done.set()
-		self.runServerPB.setEnabled(True)
-		self.stopServerPB.setEnabled(False)
-		self.stoppedLabel.setText("Safe Exit")
-		self.runningLabel.setText("")
-
-		# self.runningLabel.repaint()
-		# self.stoppedLabel.repaint()
-		# self.runServerPB.repaint()
-		# self.stopServerPB.repaint()

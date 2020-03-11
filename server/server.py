@@ -7,8 +7,8 @@ import numpy as np
 import subprocess
 from PyQt5 import QtCore
 
-import server.hardware_parameters as hw
-import server.fictrac as ft
+import json
+import server.fictraccer_temp as ft
 from .clients.motorClient import MotorClient
 from .clients.lightClient import LightClient
 from .clients.mfcClient import MFCClient
@@ -52,16 +52,15 @@ class ClientManagerThread(threading.Thread):
 
 
 class Server(object):
-    def __init__(self, hw_params=hw.params, type=None):
-        self.local_host = hw_params['local_host']
-        self.local_port = hw_params['local_port']
-        self.source_host = hw_params['source_host']
-        self.source_port = hw_params['source_port']
+    def __init__(self):
+        self.load_json()
+        self.local_host = self.config_data['local_host']
+        self.local_port = self.config_data['local_port']
 
         self.queue_pairs = []
         self.read_and_wrote_events = []
         self.shutdown = threading.Event()
-        self.shutdown_signal = threading.Event()
+        self.source_is_shutdown = threading.Event()
         self.client_shutdown = threading.Event()
         self.new_source_data = threading.Event()
         self.read_next_from_source = threading.Event()
@@ -72,14 +71,26 @@ class Server(object):
         self.queue_pairs = []
         self.read_and_wrote_events = []
         self.shutdown = threading.Event()
-        self.shutdown_signal = threading.Event()
+        self.source_is_shutdown = threading.Event()
         self.client_shutdown = threading.Event()
         self.new_source_data = threading.Event()
         self.read_next_from_source = threading.Event()
         self.read_next_from_source.set()
         self.kill_switch = False
 
-    def connect_source(self):
+    def load_json(self):
+        with open('/home/patrick/Desktop/clm/config.json', 'r+') as j:
+            self.config_data = json.load(j)
+
+    def connect_source(self, mode=None):
+        self.load_json()
+        if mode=='FT':
+            self.source_host = self.config_data['ft_reciever_host']
+            self.source_port = self.config_data['ft_reciever_port']
+        if mode=='RP':
+            self.source_host = self.config_data['replay_host']
+            self.source_port = self.config_data['replay_port']
+
         self.source_reader = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.source_reader.connect((self.source_host, self.source_port))
 
@@ -101,6 +112,8 @@ class Server(object):
             self.read_next_from_source.wait()
             self.from_source = self.source_reader.recv(1024)
             data = self.from_source.decode('UTF-8')
+
+
             if data=='<>':
                 [q[0].put('<>') for q in self.queue_pairs]
                 self.shutdown.set()
@@ -141,9 +154,6 @@ class Server(object):
 
         print('Server Write Thread = Safe Exit')
 
-    def set_source(self, sourceID):
-        self.sourceID = sourceID
-
     def set_clients(self, list_of_clients):
         self.clients = list_of_clients
 
@@ -168,61 +178,107 @@ class Server(object):
     def run(self, server_done, FicTracInstance):
         self.reinitialize()
 
+
+        if FicTracInstance is not None:
+            self.sourceID = 'FICTRAC'
+        else:
+            self.sourceID = 'REPLAYER'
+
         if self.sourceID == 'REPLAYER':
-            self.source = Replayer(self.shutdown, self.shutdown_signal, self.replayer_log_file)
+            self.replayer_log_file = '/home/patrick/Desktop/clm/logs/short.log'
+            self.source = Replayer(self.shutdown, self.source_is_shutdown, self.replayer_log_file)
             self.source_binder = threading.Thread(target=self.source.bind)
             self.source_binder.start()
             try:
-                self.connect_source()
+                self.connect_source(mode='RP')
             except ConnectionRefusedError:
                 time.sleep(2)
-                self.connect_source()
+                self.connect_source(mode='RP')
             self.source_binder.join()
 
+            self.bind()
+            self.clients_binder = threading.Thread(target=self.bind_clients)
+            self.clients_binder.start()
+            [client.connect() for client in self.clients]
+            self.clients_binder.join()
+            self.client_threads = [threading.Thread(target=client.run) for client in self.clients]
+            [thread.start() for thread in self.client_threads]
 
-        self.bind()
-        self.clients_binder = threading.Thread(target=self.bind_clients)
-        self.clients_binder.start()
-        [client.connect() for client in self.clients]
-        self.clients_binder.join()
-
-        print('a')
-
-        if self.sourceID == 'FICTRAC':
-            self.ft_thread_done = threading.Event()
-            self.ft_thread = threading.Thread(target=FicTracInstance.run, args=(self.ft_thread_done,))
-            self.ft_thread.start()
-
-        print('b')
-
-        if self.sourceID == 'REPLAYER':
             self.source_thread = threading.Thread(target=self.source.run)
             self.source_thread.start()
             self.reader_thread = threading.Thread(target=self.read_from_source)
             self.reader_thread.start()
 
-        self.client_threads = [threading.Thread(target=client.run) for client in self.clients]
-        [thread.start() for thread in self.client_threads]
+            self.writer_thread = threading.Thread(target=self.write_to_destination)
+            self.writer_thread.start()
+            self.source_is_shutdown.wait()
+            self.activate_shutdown('soft')
+            [thread.join() for thread in self.client_threads]
+            self.activate_shutdown('hard')
+            self.reader_thread.join()
+            self.writer_thread.join()
+            self.source_thread.join()
+            print('Done... Shutting Down')
 
-        print('c')
 
-        self.writer_thread = threading.Thread(target=self.write_to_destination)
-        self.writer_thread.start()
+        if self.sourceID == 'FICTRAC':
 
-        print('d')
+            self.source_binder = threading.Thread(target=FicTracInstance.bind)
+            self.source_binder.start()
 
-        self.shutdown_signal.wait()
-        self.activate_shutdown('soft')
-        [thread.join() for thread in self.client_threads]
-        self.activate_shutdown('hard')
-        self.reader_thread.join()
-        self.writer_thread.join()
-        self.source_thread.join()
-        print('Done... Shutting Down')
-        server_done.set()
+            try:
+                time.sleep(1)
+                self.connect_source(mode='FT')
+            except ConnectionRefusedError:
+                time.sleep(2)
+                self.connect_source(mode='FT')
+            self.source_binder.join()
+
+            signal_from_ft_that_hes_done = threading.Event()
+
+            self.ft_thread_done = threading.Event()
+            self.source_thread = threading.Thread(target=FicTracInstance.run, args=(self.shutdown,self.source_is_shutdown,))
+            self.source_thread.start()
+
+
+            self.bind()
+            self.clients_binder = threading.Thread(target=self.bind_clients)
+            self.clients_binder.start()
+            [client.connect() for client in self.clients]
+            self.clients_binder.join()
+            self.client_threads = [threading.Thread(target=client.run) for client in self.clients]
+            [thread.start() for thread in self.client_threads]
+
+
+            self.reader_thread = threading.Thread(target=self.read_from_source)
+            self.reader_thread.start()
+            self.writer_thread = threading.Thread(target=self.write_to_destination)
+            self.writer_thread.start()
+
+            time.sleep(3)
+            self.shutdown.set()
+
+            #self.source_is_shutdown.wait()
+
+            self.activate_shutdown('soft')
+            [thread.join() for thread in self.client_threads]
+            self.activate_shutdown('hard')
+            self.reader_thread.join()
+            self.writer_thread.join()
+            self.source_thread.join()
+            print('Done... Shutting Down')
+
+
+
+
+
+
+
+
+
 
 
 
 if __name__=='__main__':
-    server = Server(3)
-    server.run()
+    server = Server()
+    print(server)

@@ -1,20 +1,24 @@
 import sys
+import json
 import os
 import socket
 import time
 import threading
 import numpy as np
 from datetime import datetime
-import server.hardware_parameters as hw
 
 class Replayer(object):
     def __init__(self, shutdown, server_shutdown, address):
+        self.load_json()
         self.address = address
         self.connected = False
-        self.host = hw.params['source_host']
-        self.port = hw.params['source_port']
+        self.host = self.config_data['replay_host']
+        self.port = self.config_data['replay_port']
         self.shutdown = shutdown
         self.server_shutdown = server_shutdown
+    def load_json(self):
+        with open('/home/patrick/Desktop/clm/config.json', 'r+') as j:
+            self.config_data = json.load(j)
 
     def parse_log(self):
         self.playback = []

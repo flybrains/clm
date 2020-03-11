@@ -1,13 +1,17 @@
+import json
 import time
 import socket
-import server.hardware_parameters as hw
 
 class LightClient(object):
-    def __init__(self, replay=False):
-
-        self.host = hw.params['local_host']
-        self.port = hw.params['local_port']
+    def __init__(self, replay=True):
+        self.load_json()
+        self.host = self.config_data['local_host']
+        self.port = self.config_data['local_port']
         self.replay = replay
+
+    def load_json(self):
+        with open('/home/patrick/Desktop/clm/config.json', 'r+') as j:
+            self.config_data = json.load(j)
 
     def connect(self):
         self.client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
