@@ -54,7 +54,7 @@ class Replayer(object):
                     else:
                         delta = float('0.{}'.format(st[-1]))
                     time.sleep(delta)
-                    self.conn.send(str.encode('{}'.format(self.playback[index])))
+                    self.conn.send(str.encode('{}'.format(self.playback[index][:-5])))
 
                 except (KeyboardInterrupt, BrokenPipeError, ConnectionResetError) as e:
                     self.sock.close()

@@ -9,6 +9,8 @@ class MFCClient(object):
         self.port = self.config_data['local_port']
         self.replay = replay
 
+        #print('Started MFC')
+
         if not self.replay and lookup_table is not None:
             self.airchannel = lookup_table[0]
             self.channel1 = lookup_table[1]
@@ -30,7 +32,10 @@ class MFCClient(object):
     def read_from_server(self):
         data = self.client.recv(1024).decode()
         if not data=='<>':
-            data = [float(e) for e in data[1:-1].split(',')]
+            try:
+                data = [float(e) for e in data[1:-1].split(',')]
+            except ValueError:
+                data = "<>"
         return data
 
     def send_to_server(self, send_val):
@@ -95,7 +100,7 @@ class MFCClient(object):
     def run(self):
         while True:
             data = self.read_from_server()
-
+            #print('MFC Data: ', data)
             if data=='<>':
                 self.client.sendall(bytes('<>'.format(data),'UTF-8'))
                 self.client.close()
@@ -107,3 +112,4 @@ class MFCClient(object):
                 send_val = self.check_conditions(data)
 
             self.send_to_server(send_val)
+        #print('MFC Exit')

@@ -9,6 +9,8 @@ class LightClient(object):
         self.port = self.config_data['local_port']
         self.replay = replay
 
+        #print('Started Lights')
+
     def load_json(self):
         with open('/home/patrick/Desktop/clm/config.json', 'r+') as j:
             self.config_data = json.load(j)
@@ -21,7 +23,10 @@ class LightClient(object):
     def read_from_server(self):
         data = self.client.recv(1024).decode()
         if not data=='<>':
-            data = [float(e) for e in data[1:-1].split(',')]
+            try:
+                data = [float(e) for e in data[1:-1].split(',')]
+            except ValueError:
+                data = "<>"
         return data
 
     def send_to_server(self, send_val):
@@ -30,7 +35,7 @@ class LightClient(object):
     def run(self):
         while True:
             data = self.read_from_server()
-
+            #print('Light Data: ', data)
             if data=='<>':
                 self.client.sendall(bytes('<>'.format(data),'UTF-8'))
                 self.client.close()
@@ -40,8 +45,8 @@ class LightClient(object):
                 send_val = [float(data[5]), float(data[6])]
             else:
                 send_val = self.check_conditions(data)
-
             self.send_to_server(send_val)
+        #print('Light Exit')
 
 
 

@@ -31,22 +31,27 @@ class FicTraccer(object):
     def ft_process(self):
         global mypid
         global new_sock
-        p = subprocess.Popen("ft/bin/fictrac ft/sample/config.txt",stdout=subprocess.PIPE,shell=True, preexec_fn=os.setsid)
-        mypid = os.getpgid(p.pid)
+        self.p = subprocess.Popen("ft/bin/fictrac ft/sample/config.txt",stdout=subprocess.PIPE,shell=True, preexec_fn=os.setsid)
+        mypid = os.getpgid(self.p.pid)
 
-        for line in iter(p.stdout.readline,''):
+        print('a')
+
+        kill_and_restart = False
+        for line in iter(self.p.stdout.readline,''):
             l = line.rstrip().decode("utf-8")
             if "Unable to open output data socket" in l:
                 sockID = l.split('(')[-1]
                 sockID = int(sockID[:-2])
                 newSockID = sockID + 1
+                kill_and_restart = True
                 break
-        self.auto_update_ft_sock(newSockID)
-        os.killpg(mypid, signal.SIGTERM)
-
-        p = subprocess.Popen("ft/bin/fictrac ft/sample/config.txt",stdout=subprocess.PIPE,shell=True, preexec_fn=os.setsid)
-        mypid = os.getpgid(p.pid)
-        new_sock = newSockID
+        if kill_and_restart:
+            self.auto_update_ft_sock(newSockID)
+            os.killpg(mypid, signal.SIGTERM)
+            self.p = subprocess.Popen("ft/bin/fictrac ft/sample/config.txt",stdout=subprocess.PIPE,shell=True, preexec_fn=os.setsid)
+            mypid = os.getpgid(self.p.pid)
+            new_sock = newSockID
+        print('FT Process Done')
 
     def bind(self):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -84,7 +89,6 @@ class FicTraccer(object):
                         j.truncate()
                     break
 
-
     def sock_check(self):
         self.get_current_ft_sock()
         self.load_json()
@@ -103,15 +107,20 @@ class FicTraccer(object):
             json.dump(data, j, indent=4)
             j.truncate()
 
-
-
-    def send_to_server(self, wrote, read):
+    def send_to_server(self, kill_sender, wrote, read):
         with self.conn:
             while True:
-                val = self.readwrite_queue.get()
+                try:
+                    val = self.readwrite_queue.get(timeout=0.1)
+                except queue.Empty:
+                    break
                 self.conn.send(str.encode('{}'.format(val)))
+                # if kill_sender.isSet():
+                #     self.conn.send(str.encode('<>'))
+                #     break
+            print('FT Sender Done')
 
-    def recieve_from_ft(self, reciever_kill_signal, done_receiving_event, connected_event, wrote, read):
+    def recieve_from_ft(self, stop_ft_event, done_receiving_event, connected_event, wrote, read, kill_sender):
         global new_sock
 
         self.sock_check()
@@ -128,10 +137,13 @@ class FicTraccer(object):
             connected_event.set()
             data = ""
             i = 0
-            while not reciever_kill_signal.isSet():
+            while True:
                 # Receive one data frame
                 new_data = sock.recv(1024)
                 if not new_data:
+                    break
+                if stop_ft_event.isSet():
+                    kill_sender.set()
                     break
                 data += new_data.decode('UTF-8')
                 endline = data.find("\n")
@@ -142,27 +154,13 @@ class FicTraccer(object):
                 if ((len(toks) < 24) | (toks[0] != "FT")):
                     print('Bad read')
                     continue
-                cnt = int(toks[1])
-                dr_cam = [float(toks[2]), float(toks[3]), float(toks[4])]
-                err = float(toks[5])
-                dr_lab = [float(toks[6]), float(toks[7]), float(toks[8])]
-                r_cam = [float(toks[9]), float(toks[10]), float(toks[11])]
-                r_lab = [float(toks[12]), float(toks[13]), float(toks[14])]
                 posx = float(toks[15])
                 posy = float(toks[16])
                 heading = float(toks[17])
-                step_dir = float(toks[18])
-                step_mag = float(toks[19])
-                intx = float(toks[20])
-                inty = float(toks[21])
-                ts = float(toks[22])
-                seq = int(toks[23])
-
-                send_string = '{}'.format(toks[1:])
+                send_string = '{}'.format([0,0,0,0,0,0,posx,posy,heading])
                 self.readwrite_queue.put(send_string)
-            print('here')
         done_receiving_event.set()
-
+        print('FT Reciever Done')
 
     def poll_and_stop(self, stop_ft_event, done_polling_event, connected_event):
         global mypid
@@ -174,23 +172,25 @@ class FicTraccer(object):
                 os.killpg(mypid, signal.SIGTERM)
                 break
         done_polling_event.set()
+        print('Poller Done')
 
-    def run(self, shutdown, signal_to_server_that_im_done):
+    def run(self, shutdown, server_shutdown):
 
         self.stop_ft_event = threading.Event()
         self.done_polling_event = threading.Event()
         self.kill_reciever = threading.Event()
         self.done_receiving_event = threading.Event()
         self.reciever_connected = threading.Event()
+        self.kill_sender = threading.Event()
 
         self.wrote = threading.Event()
         self.read = threading.Event()
         self.read.set()
 
-        ft_thread = threading.Thread(target=self.ft_process)
-        reciever_thread = threading.Thread(target=self.recieve_from_ft, args=(self.kill_reciever,self.done_receiving_event,self.reciever_connected,self.wrote, self.read,))
-        sender_thread = threading.Thread(target=self.send_to_server, args=(self.wrote, self.read,))
-        polling_thread = threading.Thread(target=self.poll_and_stop, args=(self.stop_ft_event, self.done_polling_event, self.reciever_connected,))
+        ft_thread = threading.Thread(target=self.ft_process, name='ft_thread')
+        reciever_thread = threading.Thread(target=self.recieve_from_ft, args=(self.stop_ft_event,self.done_receiving_event,self.reciever_connected,self.wrote, self.read,self.kill_sender), name='reciever_thread')
+        sender_thread = threading.Thread(target=self.send_to_server, args=(self.stop_ft_event,self.wrote, self.read,), name='sender_thread')
+        polling_thread = threading.Thread(target=self.poll_and_stop, args=(self.stop_ft_event, self.done_polling_event, self.reciever_connected,), name='polling_thread')
 
         ft_thread.start()
         time.sleep(0.4)
@@ -199,12 +199,16 @@ class FicTraccer(object):
         polling_thread.start()
 
         shutdown.wait()
+        print('Got Shutdown Signal')
         self.stop_ft_event.set()
-
+        sender_thread.join()
         self.done_polling_event.wait()
         self.kill_reciever.set()
         self.done_receiving_event.wait()
-        signal_to_server_that_im_done.set()
+        server_shutdown.set()
+        reciever_thread.join()
+        polling_thread.join()
+        print('FT Done')
 
 if __name__=="__main__":
     ft = FicTraccer()

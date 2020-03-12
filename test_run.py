@@ -16,9 +16,6 @@ def stop_server():
     server.shutdown_signal.set()
 
 if __name__=="__main__":
-
-
-
     myFicTracInstance = ft.FicTraccer()
 
     sig1 = threading.Event()
@@ -29,18 +26,13 @@ if __name__=="__main__":
 
     myServerInstance = srv.Server()
     myServerInstance.set_clients([MotorClient(), LightClient(), MFCClient()])
-    # 
-    # def killer():
-    #     time.sleep(3)
-    #     sig1.set()
-
+    #myFicTracInstance = None
     thread = threading.Thread(target=myServerInstance.run, args=(sig1, myFicTracInstance))
-    # killerthread = threading.Thread(target=myServerInstance.run)
     thread.start()
-    # killerthread.start()
-    #
+    thread.join()
 
-
+    for thread in threading.enumerate():
+        print(thread.name)
 
 
     # app = QtWidgets.QApplication(sys.argv)

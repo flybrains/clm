@@ -28,14 +28,17 @@ class ClientManagerThread(threading.Thread):
         self.client_shutdown = client_shutdown
 
     def _get_new_data(self):
-        return self.source_data_queue.get()
+        try:
+            return self.source_data_queue.get(timeout=0.5)
+        except queue.Empty:
+            return '<>'
 
     def _put_new_data(self, val):
         self.destination_data_queue.put(val)
 
     def run(self):
         while not self.shutdown.is_set():
-            self.new_source_data.wait()
+            self.new_source_data.wait(timeout=0.2)
             new_source_data = self._get_new_data()
             if self.client_shutdown.is_set():
                 new_source_data = '<>'
@@ -109,10 +112,9 @@ class Server(object):
 
     def read_from_source(self):
         while not self.shutdown.is_set():
-            self.read_next_from_source.wait()
+            self.read_next_from_source.wait(timeout=0.5)
             self.from_source = self.source_reader.recv(1024)
             data = self.from_source.decode('UTF-8')
-
 
             if data=='<>':
                 [q[0].put('<>') for q in self.queue_pairs]
@@ -123,12 +125,10 @@ class Server(object):
 
             try:
                 data = [float(e) for e in data[1:-1].split(',')]
-
-                client_data = data[:-5]
-                client_data.insert(0,time.time())
+                data.insert(0,time.time())
 
                 # Send information to hardware clients
-                [q[0].put(client_data) for q in self.queue_pairs]
+                [q[0].put(data) for q in self.queue_pairs]
 
                 self.new_source_data.set()
                 self.read_next_from_source.clear()
@@ -138,8 +138,11 @@ class Server(object):
 
     def write_to_destination(self):
         while not self.shutdown.is_set():
-            [rwe.wait() for rwe in self.read_and_wrote_events]
-            from_clients = [q[1].get() for q in self.queue_pairs]
+            [rwe.wait(timeout=0.2) for rwe in self.read_and_wrote_events]
+            try:
+                from_clients = [q[1].get(timeout=0.5) for q in self.queue_pairs]
+            except queue.Empty:
+                break
             if from_clients[0]=="<>":
                 break
             print(from_clients)
@@ -150,7 +153,6 @@ class Server(object):
             #########################
             self.read_next_from_source.set()
             [rwe.clear() for rwe in self.read_and_wrote_events]
-
 
         print('Server Write Thread = Safe Exit')
 
@@ -177,18 +179,24 @@ class Server(object):
 
     def run(self, server_done, FicTracInstance):
         self.reinitialize()
-
-
         if FicTracInstance is not None:
             self.sourceID = 'FICTRAC'
         else:
             self.sourceID = 'REPLAYER'
 
+
+
+
         if self.sourceID == 'REPLAYER':
+            # Create Replay Source Object
             self.replayer_log_file = '/home/patrick/Desktop/clm/logs/short.log'
             self.source = Replayer(self.shutdown, self.source_is_shutdown, self.replayer_log_file)
+
+            # Start the source binding routine
             self.source_binder = threading.Thread(target=self.source.bind)
             self.source_binder.start()
+
+            # While source tries to bind, start the server-source binding routine
             try:
                 self.connect_source(mode='RP')
             except ConnectionRefusedError:
@@ -196,21 +204,31 @@ class Server(object):
                 self.connect_source(mode='RP')
             self.source_binder.join()
 
+            # Start routine to bind server to hardware clients
             self.bind()
             self.clients_binder = threading.Thread(target=self.bind_clients)
             self.clients_binder.start()
+
+            # Start each clients' routine to accept server binding
             [client.connect() for client in self.clients]
             self.clients_binder.join()
+
+            # Start running procedure for each client in its own thread
             self.client_threads = [threading.Thread(target=client.run) for client in self.clients]
             [thread.start() for thread in self.client_threads]
 
+            # Start replay source main routine
             self.source_thread = threading.Thread(target=self.source.run)
             self.source_thread.start()
+
+            # Start server read <-- source routine
             self.reader_thread = threading.Thread(target=self.read_from_source)
             self.reader_thread.start()
 
+            # Start server write --> pi routine
             self.writer_thread = threading.Thread(target=self.write_to_destination)
             self.writer_thread.start()
+
             self.source_is_shutdown.wait()
             self.activate_shutdown('soft')
             [thread.join() for thread in self.client_threads]
@@ -220,12 +238,12 @@ class Server(object):
             self.source_thread.join()
             print('Done... Shutting Down')
 
-
         if self.sourceID == 'FICTRAC':
-
-            self.source_binder = threading.Thread(target=FicTracInstance.bind)
+            # Already have FicTrac Source Object, start its binding routine
+            self.source_binder = threading.Thread(target=FicTracInstance.bind, name='source_binder')
             self.source_binder.start()
 
+            # While source tries to bind, start the server-source binding routine
             try:
                 time.sleep(1)
                 self.connect_source(mode='FT')
@@ -234,48 +252,43 @@ class Server(object):
                 self.connect_source(mode='FT')
             self.source_binder.join()
 
-            signal_from_ft_that_hes_done = threading.Event()
-
-            self.ft_thread_done = threading.Event()
-            self.source_thread = threading.Thread(target=FicTracInstance.run, args=(self.shutdown,self.source_is_shutdown,))
-            self.source_thread.start()
-
-
+            # Start routine to bind server to hardware clients
             self.bind()
-            self.clients_binder = threading.Thread(target=self.bind_clients)
+            self.clients_binder = threading.Thread(target=self.bind_clients, name='client_binder')
             self.clients_binder.start()
+
+            # Start each clients' routine to accept server binding
             [client.connect() for client in self.clients]
             self.clients_binder.join()
-            self.client_threads = [threading.Thread(target=client.run) for client in self.clients]
+
+            # Start running procedure for each client in its own thread
+            self.client_threads = [threading.Thread(target=client.run, name='client') for client in self.clients]
             [thread.start() for thread in self.client_threads]
 
+            # Start replay source main routine
+            self.source_thread = threading.Thread(target=FicTracInstance.run, args=(self.shutdown, self.source_is_shutdown,), name='source_thread')
+            self.source_thread.start()
 
-            self.reader_thread = threading.Thread(target=self.read_from_source)
+            # Start server read <-- source routine
+            self.reader_thread = threading.Thread(target=self.read_from_source,name='reader_thread')
             self.reader_thread.start()
-            self.writer_thread = threading.Thread(target=self.write_to_destination)
+
+            # Start server write --> pi routine
+            self.writer_thread = threading.Thread(target=self.write_to_destination,name='writer_thread')
             self.writer_thread.start()
 
-            time.sleep(3)
+            time.sleep(2)
             self.shutdown.set()
 
-            #self.source_is_shutdown.wait()
-
+            self.source_is_shutdown.wait()
             self.activate_shutdown('soft')
             [thread.join() for thread in self.client_threads]
             self.activate_shutdown('hard')
             self.reader_thread.join()
             self.writer_thread.join()
             self.source_thread.join()
+
             print('Done... Shutting Down')
-
-
-
-
-
-
-
-
-
 
 
 

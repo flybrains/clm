@@ -9,6 +9,8 @@ class MotorClient(object):
         self.port = self.config_data['local_port']
         self.replay = replay
 
+        #print('Started Motor')
+
     def load_json(self):
         with open('/home/patrick/Desktop/clm/config.json', 'r+') as j:
             self.config_data = json.load(j)
@@ -53,7 +55,10 @@ class MotorClient(object):
     def read_from_server(self):
         data = self.client.recv(1024).decode()
         if not data=='<>':
-            data = [float(e) for e in data[1:-1].split(',')]
+            try:
+                data = [float(e) for e in data[1:-1].split(',')]
+            except ValueError:
+                data = "<>"
         return data
 
     def send_to_server(self, send_val):
@@ -62,7 +67,7 @@ class MotorClient(object):
     def run(self):
         while True:
             data = self.read_from_server()
-
+            #print('Motor Data: ', data)
             if data=='<>':
                 self.client.sendall(bytes('<>'.format(data),'UTF-8'))
                 self.client.close()
@@ -71,6 +76,6 @@ class MotorClient(object):
             if self.replay:
                 send_val = [0.0]
             else:
-                s
-
+                send_val = [0.0]
             self.send_to_server(send_val)
+        #print('Motor Exit')
